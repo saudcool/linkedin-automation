@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { Campaign } from '@/lib/types'
-import CampaignList from '@/components/CampaignList'
 import CampaignDetail from '@/components/CampaignDetail'
 import NewCampaignModal from '@/components/NewCampaignModal'
 
