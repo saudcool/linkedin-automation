@@ -54,7 +54,14 @@ async function login(page) {
   log('Logging in to LinkedIn...')
   await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' })
   await humanDelay()
+  // Skip login if already logged in
+  if (page.url().includes('/feed')) {
+    log('✅ Already logged in')
+    return
+  }
 
+  await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' })
+  await humanDelay()
   await page.fill('#username', LINKEDIN_EMAIL)
   await humanDelay()
   await page.fill('#password', LINKEDIN_PASSWORD)
