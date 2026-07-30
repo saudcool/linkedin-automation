@@ -17,7 +17,7 @@
  * - Stops if LinkedIn shows a captcha or restriction warning
  */
 
-require('dotenv').config({ path: 'C:\Users\Saud\Documents\GitHub\inkedin-automation\.env.local' })
+require('dotenv').config({ path: 'C:\\Users\\Saud\\Documents\\GitHub\\inkedin-automation\\.env.local' })
 const { chromium } = require('playwright')
 const { createClient } = require('@supabase/supabase-js')
 
