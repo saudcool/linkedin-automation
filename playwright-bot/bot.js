@@ -52,7 +52,7 @@ async function logActivity(campaignId, leadId, action, details = '') {
 // ─── LinkedIn Actions ───────────────────────────────────────────────────────
 async function login(page) {
   log('Logging in to LinkedIn...')
-  await page.goto('https://www.linkedin.com/login', { waitUntil: 'networkidle' })
+  await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' })
   await humanDelay()
 
   await page.fill('#username', LINKEDIN_EMAIL)
@@ -81,7 +81,7 @@ async function sendConnectionRequest(page, lead) {
   const url = lead.linkedin_url.startsWith('http') ? lead.linkedin_url : `https://${lead.linkedin_url}`
   log(`Visiting profile: ${lead.name} — ${url}`)
 
-  await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 })
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
   await humanDelay()
 
   // Check for captcha
@@ -146,7 +146,7 @@ async function sendMessage(page, lead, messageText, newStatus, timestampField) {
   if (!lead.linkedin_url) return false
 
   const url = lead.linkedin_url.startsWith('http') ? lead.linkedin_url : `https://${lead.linkedin_url}`
-  await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 })
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 })
   await humanDelay()
 
   const msgBtn = await page.$('button[aria-label*="Message"]') ||
