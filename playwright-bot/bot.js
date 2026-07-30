@@ -51,23 +51,28 @@ async function logActivity(campaignId, leadId, action, details = '') {
 
 // ─── LinkedIn Actions ───────────────────────────────────────────────────────
 async function login(page) {
-  log('Logging in to LinkedIn...')
-  await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' })
-  await humanDelay()
-  // Skip login if already logged in
+  log('Checking LinkedIn session...')
+
+  // Go to feed first to check if already logged in
+  await page.goto('https://www.linkedin.com/feed', { waitUntil: 'domcontentloaded' })
+  await sleep(3000)
+
   if (page.url().includes('/feed')) {
-    log('✅ Already logged in')
+    log('✅ Already logged in, skipping login')
     return
   }
 
+  // Not logged in, go to login page
+  log('Logging in to LinkedIn...')
   await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' })
   await humanDelay()
+
   await page.fill('#username', LINKEDIN_EMAIL)
   await humanDelay()
   await page.fill('#password', LINKEDIN_PASSWORD)
   await humanDelay()
   await page.click('[data-litms-control-urn="login-submit"]')
-  await page.waitForURL('**/feed**', { timeout: 15000 }).catch(() => {})
+  await sleep(5000)
 
   // Check for security challenge
   if (page.url().includes('checkpoint') || page.url().includes('challenge')) {
