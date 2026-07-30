@@ -123,35 +123,57 @@ export default function AddLeadsModal({ campaign, onClose, onAdded }: Props) {
   }
 
   async function submit() {
-    let leads: LeadInput[] = []
-    if (mode === 'manual') {
-      leads = manualLeads.filter(l => l.name.trim())
-    } else {
-      leads = getMappedLeads()
-    }
-    if (leads.length === 0) {
-      setError('No valid leads found. Make sure the Name column is mapped and has data.')
-      return
-    }
-    setSaving(true)
-    setError('')
-    setProgress(`Writing personalized messages for ${leads.length} lead${leads.length > 1 ? 's' : ''} with Claude...`)
+  let leads: LeadInput[] = []
+  if (mode === 'manual') {
+    leads = manualLeads.filter(l => l.name.trim())
+  } else {
+    leads = getMappedLeads()
+  }
+
+  if (leads.length === 0) {
+    setError('No valid leads found.')
+    return
+  }
+
+  setSaving(true)
+  setError('')
+  const saved: Lead[] = []
+
+  for (let i = 0; i < leads.length; i++) {
+    const lead = leads[i]
+    setProgress(`Generating messages for ${lead.name} (${i + 1}/${leads.length})...`)
+
     try {
-      const res = await fetch('/api/leads', {
+      // Step 1: Generate messages
+      const genRes = await fetch('/api/generate-messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leads, campaign }),
+        body: JSON.stringify({ lead, campaign }),
       })
-      const data = await res.json()
-      if (data.error) throw new Error(data.error)
-      onAdded(data.leads)
+      const genData = await genRes.json()
+      if (!genData.success) throw new Error(genData.error)
+
+      // Step 2: Save lead with messages
+      const saveRes = await fetch('/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead, campaign, messages: genData.messages }),
+      })
+      const saveData = await saveRes.json()
+      if (saveData.error) throw new Error(saveData.error)
+      saved.push(saveData.lead)
     } catch (e: any) {
-      setError(e.message)
-      setProgress('')
-    } finally {
+      setError(`Failed on ${lead.name}: ${e.message}`)
       setSaving(false)
+      setProgress('')
+      return
     }
   }
+
+  setProgress('')
+  setSaving(false)
+  onAdded(saved)
+}
 
   const mappedLeads = mode === 'csv' && csvStep !== 'upload' ? getMappedLeads() : []
 
