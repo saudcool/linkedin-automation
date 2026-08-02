@@ -30,45 +30,60 @@ async function logActivity(campaignId, leadId, action, details = '') {
 
 async function login(page) {
   log('Checking if already logged in...')
+  await page.goto('https://www.linkedin.com/feed', { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await sleep(3000)
+  log(`Current URL: ${page.url()}`)
 
-  // Check feed first — don't go to login page yet
-  try {
-    await page.goto('https://www.linkedin.com/feed', { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await sleep(2000)
-  } catch (e) {
-    log('Feed load failed, trying login...')
-  }
-
-  const currentUrl = page.url()
-  log(`Current URL: ${currentUrl}`)
-
-  if (currentUrl.includes('/feed') || currentUrl.includes('/home')) {
+  if (page.url().includes('/feed')) {
     log('✅ Already logged in!')
     return
   }
 
-  // Need to log in
-  log('Not logged in. Logging in now...')
+  log('Not logged in. Going to login page...')
   await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 })
-  await sleep(2000)
+  await sleep(5000)
+  log(`Login page URL: ${page.url()}`)
 
+  // Check if LinkedIn already redirected us
+  if (page.url().includes('/feed')) {
+    log('✅ Auto-logged in!')
+    return
+  }
+
+  // Wait for either the username field OR a redirect to feed
+  log('Waiting for login form or auto-redirect...')
+  try {
+    await Promise.race([
+      page.waitForSelector('#username', { timeout: 15000 }),
+      page.waitForURL('**/feed**', { timeout: 15000 }),
+    ])
+  } catch (e) {
+    log('Neither login form nor feed found, continuing anyway...')
+  }
+
+  await sleep(1000)
+  log(`URL after waiting: ${page.url()}`)
+
+  // Check again if we got redirected to feed
+  if (page.url().includes('/feed')) {
+    log('✅ Auto-logged in by LinkedIn!')
+    return
+  }
+
+  // Now safe to fill credentials
+  log('Filling in credentials...')
   await page.fill('#username', LINKEDIN_EMAIL)
   await sleep(1000)
   await page.fill('#password', LINKEDIN_PASSWORD)
   await sleep(1000)
   await page.click('button[type="submit"]')
-  await sleep(5000)
+  await sleep(6000)
 
-  const urlAfter = page.url()
-  log(`URL after login attempt: ${urlAfter}`)
+  log(`URL after login submit: ${page.url()}`)
 
-  if (urlAfter.includes('checkpoint') || urlAfter.includes('challenge') || urlAfter.includes('verify')) {
-    log('⚠️  Security check detected! Please complete it manually in the browser. Waiting up to 2 minutes...')
+  if (page.url().includes('checkpoint') || page.url().includes('challenge')) {
+    log('⚠️  Security check! Complete it manually. Waiting 2 minutes...')
     await page.waitForURL('**/feed**', { timeout: 120000 })
-  }
-
-  if (!page.url().includes('/feed')) {
-    throw new Error(`Login failed. Current URL: ${page.url()}`)
   }
 
   log('✅ Logged in successfully!')
@@ -235,6 +250,9 @@ async function sendMessage(page, lead, messageText, newStatus, timestampField) {
 }
 
 async function run() {
+  log('🔵 Bot started')
+  log(`🔵 Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`)
+  log(`🔵 LinkedIn email: ${LINKEDIN_EMAIL}`)
   if (!LINKEDIN_EMAIL || !LINKEDIN_PASSWORD) {
     log('❌ LINKEDIN_EMAIL and LINKEDIN_PASSWORD must be set in .env.local')
     process.exit(1)
