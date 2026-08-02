@@ -107,6 +107,9 @@ async function sendConnectionRequest(page, lead) {
   }
 
   await sleep(3000)
+  // Take screenshot to see what the bot sees
+  await page.screenshot({ path: `./playwright-bot/screenshot-${lead.name}.png` })
+  log(`Screenshot saved for ${lead.name}`)
 
   // Check for captcha
   if (await page.$('.captcha-container') || await page.$('[data-test="robot-challenge"]')) {
@@ -114,14 +117,28 @@ async function sendConnectionRequest(page, lead) {
     process.exit(1)
   }
 
+  // Debug: log all buttons on the page
+  const allButtons = await page.$$eval('button', btns => 
+    btns.map(b => b.innerText.trim() + ' | ' + (b.getAttribute('aria-label') || '')).filter(t => t.length > 3)
+  )
+  log(`Buttons on page: ${allButtons.slice(0, 10).join(' || ')}`)
+
   // Try multiple selectors for connect button
   let connectBtn = null
   const connectSelectors = [
     'button[aria-label*="Connect"]',
     'button[aria-label*="connect"]',
+    'button:has-text("Connect")',
+    'button span:has-text("Connect")',
     '.pvs-profile-actions button:has-text("Connect")',
     'main button:has-text("Connect")',
+    '.ph5 button:has-text("Connect")',
+    '.artdeco-button:has-text("Connect")',
   ]
+  const profileButtons = await page.$$eval('.ph5 button, .pv-top-card button, .pvs-profile-actions button', 
+    btns => btns.map(b => b.innerText.trim() + ' | ' + (b.getAttribute('aria-label') || ''))
+  ).catch(() => [])
+  log(`Profile buttons: ${profileButtons.join(' || ')}`)
 
   for (const sel of connectSelectors) {
     try {
@@ -133,18 +150,23 @@ async function sendConnectionRequest(page, lead) {
   // Check More button if connect not visible
   if (!connectBtn) {
     try {
-      const moreBtn = await page.$('button[aria-label*="More actions"]') || await page.$('button:has-text("More")')
+      const moreBtn = await page.$('button[aria-label*="More"]') ||
+        await page.$('button[aria-label*="More"]') ||
+        await page.$('button:has-text("More")')
       if (moreBtn) {
+        log('Clicking More button to find Connect...')
         await moreBtn.click()
-        await sleep(1000)
+        await sleep(2000)
         for (const sel of connectSelectors) {
           try { connectBtn = await page.$(sel); if (connectBtn) break } catch (e) {}
         }
+        // Also check dropdown menu items
+        if (!connectBtn) {
+          connectBtn = await page.$('.artdeco-dropdown__content button:has-text("Connect")').catch(() => null)
+        }
       }
     } catch (e) {}
-  }
-
-  if (!connectBtn) {
+  }  if (!connectBtn) {
     const msgBtn = await page.$('button[aria-label*="Message"]').catch(() => null)
     if (msgBtn) {
       log(`Already connected with ${lead.name}`)
