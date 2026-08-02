@@ -255,11 +255,14 @@ async function run() {
     slowMo: 100,
   })
 
+  // Save session to disk so LinkedIn stays logged in between runs
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
+    storageState: require('fs').existsSync('./playwright-bot/session.json')
+      ? './playwright-bot/session.json'
+      : undefined,
   })
-
   const page = await context.newPage()
 
   // Hide automation flags
@@ -269,7 +272,8 @@ async function run() {
 
   try {
     await login(page)
-
+    await context.storageState({ path: './playwright-bot/session.json' })
+    log('💾 Session saved')
     let connectionsSentToday = 0
     let messagesSentToday = 0
     const now = new Date()
