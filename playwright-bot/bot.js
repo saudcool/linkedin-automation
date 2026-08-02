@@ -274,6 +274,22 @@ async function run() {
     await login(page)
     await context.storageState({ path: './playwright-bot/session.json' })
     log('💾 Session saved')
+
+    await context.storageState({ path: './playwright-bot/session.json' })
+    log('💾 Session saved')
+
+// DEBUG: Check database connection and leads
+    const { data: allLeads, error: dbError } = await db.from('leads').select('*')
+    if (dbError) {
+      log(`❌ Database error: ${dbError.message}`)
+    } else {
+    log(`📊 Total leads in database: ${allLeads.length}`)
+    allLeads.forEach(l => log(`   - ${l.name} | status: ${l.status} | campaign_id: ${l.campaign_id}`))
+    }
+
+const { data: campaigns } = await db.from('campaigns').select('*')
+log(`📊 Total campaigns: ${(campaigns || []).length}`)
+campaigns?.forEach(c => log(`   - ${c.name} | status: ${c.status}`))
     let connectionsSentToday = 0
     let messagesSentToday = 0
     const now = new Date()
