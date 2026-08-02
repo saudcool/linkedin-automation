@@ -9,7 +9,7 @@ const db = createClient(
 
 const LINKEDIN_EMAIL = process.env.LINKEDIN_EMAIL
 const LINKEDIN_PASSWORD = process.env.LINKEDIN_PASSWORD
-const MAX_CONNECTIONS_PER_DAY = 10
+const MAX_CONNECTIONS_PER_DAY = 15
 const MAX_MESSAGES_PER_DAY = 20
 const HEADLESS = process.env.HEADLESS === 'true'
 
@@ -275,16 +275,15 @@ async function run() {
     await context.storageState({ path: './playwright-bot/session.json' })
     log('💾 Session saved')
 
-    await context.storageState({ path: './playwright-bot/session.json' })
-    log('💾 Session saved')
-
+    
 // DEBUG: Check database connection and leads
     const { data: allLeads, error: dbError } = await db.from('leads').select('*')
     if (dbError) {
       log(`❌ Database error: ${dbError.message}`)
-    } else {
-    log(`📊 Total leads in database: ${allLeads.length}`)
-    allLeads.forEach(l => log(`   - ${l.name} | status: ${l.status} | campaign_id: ${l.campaign_id}`))
+    } 
+    else {
+      log(`📊 Total leads in database: ${allLeads.length}`)
+      allLeads.forEach(l => log(`   - ${l.name} | status: ${l.status} | campaign_id: ${l.campaign_id}`))
     }
 
 const { data: campaigns } = await db.from('campaigns').select('*')
