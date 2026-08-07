@@ -9,7 +9,7 @@ const db = createClient(
 
 const LINKEDIN_EMAIL = process.env.LINKEDIN_EMAIL
 const LINKEDIN_PASSWORD = process.env.LINKEDIN_PASSWORD
-const MAX_CONNECTIONS_PER_DAY = 15
+const MAX_CONNECTIONS_PER_DAY = 0
 const MAX_MESSAGES_PER_DAY = 20
 const HEADLESS = process.env.HEADLESS === 'true'
 
@@ -25,7 +25,9 @@ async function updateLead(id, updates) {
 }
 
 async function logActivity(campaignId, leadId, action, details = '') {
-  await db.from('activity_log').insert({ campaign_id: campaignId, lead_id: leadId, action, details }).catch(() => {})
+  try {
+    await db.from('activity_log').insert({ campaign_id: campaignId, lead_id: leadId, action, details })
+  } catch(e) {}
 }
 
 async function login(page) {
@@ -44,13 +46,11 @@ async function login(page) {
   await sleep(5000)
   log(`Login page URL: ${page.url()}`)
 
-  // Check if LinkedIn already redirected us
   if (page.url().includes('/feed')) {
     log('✅ Auto-logged in!')
     return
   }
 
-  // Wait for either the username field OR a redirect to feed
   log('Waiting for login form or auto-redirect...')
   try {
     await Promise.race([
@@ -58,19 +58,16 @@ async function login(page) {
       page.waitForURL('**/feed**', { timeout: 15000 }),
     ])
   } catch (e) {
-    log('Neither login form nor feed found, continuing anyway...')
+    log('Continuing anyway...')
   }
 
-  await sleep(1000)
-  log(`URL after waiting: ${page.url()}`)
+  await sleep(2000)
 
-  // Check again if we got redirected to feed
   if (page.url().includes('/feed')) {
     log('✅ Auto-logged in by LinkedIn!')
     return
   }
 
-  // Now safe to fill credentials
   log('Filling in credentials...')
   await page.fill('#username', LINKEDIN_EMAIL)
   await sleep(1000)
@@ -78,8 +75,6 @@ async function login(page) {
   await sleep(1000)
   await page.click('button[type="submit"]')
   await sleep(6000)
-
-  log(`URL after login submit: ${page.url()}`)
 
   if (page.url().includes('checkpoint') || page.url().includes('challenge')) {
     log('⚠️  Security check! Complete it manually. Waiting 2 minutes...')
@@ -96,7 +91,10 @@ async function sendConnectionRequest(page, lead) {
     return false
   }
 
-  const url = lead.linkedin_url.startsWith('http') ? lead.linkedin_url : `https://${lead.linkedin_url}`
+  const url = lead.linkedin_url.startsWith('http')
+    ? lead.linkedin_url
+    : `https://${lead.linkedin_url}`
+
   log(`Visiting: ${lead.name} — ${url}`)
 
   try {
@@ -106,115 +104,233 @@ async function sendConnectionRequest(page, lead) {
     return false
   }
 
-  await sleep(3000)
-  // Take screenshot to see what the bot sees
-  await page.screenshot({ path: `./playwright-bot/screenshot-${lead.name}.png` })
-  log(`Screenshot saved for ${lead.name}`)
+  await sleep(4000)
 
-  // Check for captcha
-  if (await page.$('.captcha-container') || await page.$('[data-test="robot-challenge"]')) {
-    log('🛑 Captcha detected! Stopping. Solve it manually and restart.')
-    process.exit(1)
-  }
+  // Debug: find all buttons and their locations
+  const pageInfo = await page.evaluate(() => {
+    const allBtns = Array.from(document.querySelectorAll('button'))
+    return allBtns
+      .map(b => ({
+        text: b.innerText.trim().replace(/\n/g, ' '),
+        label: b.getAttribute('aria-label') || '',
+        classes: b.className.substring(0, 80),
+        rect: JSON.stringify(b.getBoundingClientRect())
+      }))
+      .filter(b => b.text.length > 0 || b.label.length > 0)
+  })
 
-  // Debug: log all buttons on the page
-  const allButtons = await page.$$eval('button', btns => 
-    btns.map(b => b.innerText.trim() + ' | ' + (b.getAttribute('aria-label') || '')).filter(t => t.length > 3)
+  log(`All buttons: ${pageInfo.map(b => `"${b.text}" [${b.label}]`).join(' | ')}`)
+
+  // Find Connect button anywhere on page
+  const connectInfo = pageInfo.find(
+    b => b.text.includes('Connect') || b.label.includes('Connect')
   )
-  log(`Buttons on page: ${allButtons.slice(0, 10).join(' || ')}`)
 
-  // Try multiple selectors for connect button
-  let connectBtn = null
-  const connectSelectors = [
-    'button[aria-label*="Connect"]',
-    'button[aria-label*="connect"]',
-    'button:has-text("Connect")',
-    'button span:has-text("Connect")',
-    '.pvs-profile-actions button:has-text("Connect")',
-    'main button:has-text("Connect")',
-    '.ph5 button:has-text("Connect")',
-    '.artdeco-button:has-text("Connect")',
-  ]
-  const profileButtons = await page.$$eval('.ph5 button, .pv-top-card button, .pvs-profile-actions button', 
-    btns => btns.map(b => b.innerText.trim() + ' | ' + (b.getAttribute('aria-label') || ''))
-  ).catch(() => [])
-  log(`Profile buttons: ${profileButtons.join(' || ')}`)
+  if (connectInfo) {
+    log(`Found Connect button: "${connectInfo.text}" [${connectInfo.label}]`)
 
-  for (const sel of connectSelectors) {
-    try {
-      connectBtn = await page.$(sel)
-      if (connectBtn) { log(`Found connect button with: ${sel}`); break }
-    } catch (e) {}
-  }
+    const clicked = await page.evaluate(({ btnText, btnLabel }) => {
+      const allBtns = Array.from(document.querySelectorAll('button'))
+      const btn = allBtns.find(
+        b =>
+          b.innerText.trim().replace(/\n/g, ' ') === btnText ||
+          (b.getAttribute('aria-label') === btnLabel && btnLabel.length > 0)
+      )
 
-  // Check More button if connect not visible
-  if (!connectBtn) {
-    try {
-      const moreBtn = await page.$('button[aria-label*="More"]') ||
-        await page.$('button[aria-label*="More"]') ||
-        await page.$('button:has-text("More")')
-      if (moreBtn) {
-        log('Clicking More button to find Connect...')
-        await moreBtn.click()
-        await sleep(2000)
-        for (const sel of connectSelectors) {
-          try { connectBtn = await page.$(sel); if (connectBtn) break } catch (e) {}
-        }
-        // Also check dropdown menu items
-        if (!connectBtn) {
-          connectBtn = await page.$('.artdeco-dropdown__content button:has-text("Connect")').catch(() => null)
-        }
+      if (btn) {
+        btn.click()
+        return true
       }
-    } catch (e) {}
-  }  if (!connectBtn) {
-    const msgBtn = await page.$('button[aria-label*="Message"]').catch(() => null)
-    if (msgBtn) {
-      log(`Already connected with ${lead.name}`)
-      await updateLead(lead.id, { status: 'connected', connected_at: new Date().toISOString() })
-      return 'already_connected'
-    }
-    log(`Could not find Connect button for ${lead.name} — skipping`)
-    return false
-  }
 
-  await connectBtn.click()
-  await sleep(2000)
+      return false
+    }, {
+      btnText: connectInfo.text,
+      btnLabel: connectInfo.label
+    })
 
-  // Add a note
-  try {
-    const addNoteBtn = await page.$('button[aria-label="Add a note"]') || await page.$('button:has-text("Add a note")')
-    if (addNoteBtn && lead.connection_msg) {
-      await addNoteBtn.click()
-      await sleep(1500)
-      const textarea = await page.$('textarea[name="message"]') || await page.$('#custom-message') || await page.$('textarea')
-      if (textarea) {
-        await textarea.click()
-        const msg = lead.connection_msg.slice(0, 280)
-        for (const char of msg) {
-          await textarea.type(char, { delay: rand(30, 80) })
-        }
-        await sleep(1000)
-      }
-    }
-  } catch (e) {
-    log(`Could not add note: ${e.message}`)
-  }
-
-  // Send
-  try {
-    const sendBtn = await page.$('button[aria-label="Send now"]') ||
-      await page.$('button[aria-label="Send invitation"]') ||
-      await page.$('button:has-text("Send")')
-    if (sendBtn) {
-      await sendBtn.click()
+    if (clicked) {
+      log(`Clicked Connect for ${lead.name}`)
       await sleep(2000)
-      log(`✅ Connection request sent to ${lead.name}`)
-      await updateLead(lead.id, { status: 'connection_sent', connection_sent_at: new Date().toISOString() })
-      await logActivity(lead.campaign_id, lead.id, 'connection_sent', `Sent to ${lead.name}`)
+
+      const dialogBtns = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('button'))
+        return btns.map(
+          b => `"${b.innerText.trim()}" [${b.getAttribute('aria-label') || ''}]`
+        )
+      })
+
+      log(`Dialog buttons: ${dialogBtns.join(' | ')}`)
+
+      try {
+        await page
+          .locator('[role="dialog"]')
+          .locator('button:has-text("Send without a note")')
+          .click()
+
+        log(`✅ Connection request sent to ${lead.name}`)
+
+        await updateLead(lead.id, {
+          status: 'connection_sent',
+          connection_sent_at: new Date().toISOString()
+        })
+
+        await logActivity(
+          lead.campaign_id,
+          lead.id,
+          'connection_sent',
+          `Sent to ${lead.name}`
+        )
+
+        return true
+      } catch (e) {
+        try {
+          await page
+            .locator('[role="dialog"]')
+            .locator('button:has-text("Send")')
+            .click()
+
+          log(`✅ Connection request sent to ${lead.name}`)
+
+          await updateLead(lead.id, {
+            status: 'connection_sent',
+            connection_sent_at: new Date().toISOString()
+          })
+
+          await logActivity(
+            lead.campaign_id,
+            lead.id,
+            'connection_sent',
+            `Sent to ${lead.name}`
+          )
+
+          return true
+        } catch (e2) {
+          log(`Send button not found for ${lead.name}: ${e2.message}`)
+        }
+      }
+    }
+  }
+
+  // No Connect button visible — try More button
+  log(`No Connect button visible for ${lead.name}, trying More...`)
+
+  const moreClicked = await page.evaluate(() => {
+    const allBtns = Array.from(document.querySelectorAll('button'))
+
+    const topBtns = allBtns.filter(b => {
+      const rect = b.getBoundingClientRect()
+      return rect.top < 600 && rect.top > 0 && b.innerText.trim() === 'More'
+    })
+
+    if (topBtns.length > 0) {
+      topBtns[0].click()
       return true
     }
-  } catch (e) {
-    log(`Send button error: ${e.message}`)
+
+    return false
+  })
+
+  if (moreClicked) {
+    log('Clicked More button, waiting for dropdown...')
+    await sleep(2000)
+
+    await page.screenshot({
+      path: `./playwright-bot/screenshot-${lead.name}-dropdown.png`
+    })
+
+    const dropdownConnect = await page.evaluate(() => {
+      const allItems = Array.from(
+        document.querySelectorAll(
+          '.artdeco-dropdown__content li, .artdeco-dropdown--is-open li, [role="menu"] li, [role="menuitem"]'
+        )
+      )
+
+      const connectItem = allItems.find(i =>
+        i.innerText.includes('Connect')
+      )
+
+      if (connectItem) {
+        const btn = connectItem.querySelector('button') || connectItem
+        btn.click()
+        return true
+      }
+
+      return false
+    })
+
+    if (dropdownConnect) {
+      log(`Clicked Connect from More dropdown for ${lead.name}`)
+      await sleep(2000)
+
+      try {
+        await page
+          .locator('[role="dialog"]')
+          .locator('button:has-text("Send without a note")')
+          .click()
+
+        log(`✅ Connection request sent to ${lead.name}`)
+
+        await updateLead(lead.id, {
+          status: 'connection_sent',
+          connection_sent_at: new Date().toISOString()
+        })
+
+        await logActivity(
+          lead.campaign_id,
+          lead.id,
+          'connection_sent',
+          `Sent to ${lead.name}`
+        )
+
+        return true
+      } catch (e) {
+        try {
+          await page
+            .locator('[role="dialog"]')
+            .locator('button:has-text("Send")')
+            .click()
+
+          log(`✅ Connection request sent to ${lead.name}`)
+
+          await updateLead(lead.id, {
+            status: 'connection_sent',
+            connection_sent_at: new Date().toISOString()
+          })
+
+          await logActivity(
+            lead.campaign_id,
+            lead.id,
+            'connection_sent',
+            `Sent to ${lead.name}`
+          )
+
+          return true
+        } catch (e2) {
+          log(`Send button not found for ${lead.name}: ${e2.message}`)
+        }
+      }
+    } else {
+      const isConnected = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('button'))
+        return btns.some(b => b.innerText.includes('Message'))
+      })
+
+      if (isConnected) {
+        log(`Already connected with ${lead.name}`)
+
+        await updateLead(lead.id, {
+          status: 'connected',
+          connected_at: new Date().toISOString()
+        })
+
+        return 'already_connected'
+      }
+
+      log(`Could not find any action button for ${lead.name}`)
+      return false
+    }
+  } else {
+    log(`Could not find More button for ${lead.name}`)
   }
 
   return false
@@ -234,13 +350,21 @@ async function sendMessage(page, lead, messageText, newStatus, timestampField) {
 
   await sleep(3000)
 
-  const msgBtn = await page.$('button[aria-label*="Message"]') || await page.$('button:has-text("Message")').catch(() => null)
-  if (!msgBtn) {
-    log(`No message button for ${lead.name} — not connected yet?`)
+  const msgClicked = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'))
+    const msgBtn = btns.find(b => 
+      b.innerText.trim() === 'Message' ||
+      (b.getAttribute('aria-label') || '').includes('Message')
+    )
+    if (msgBtn) { msgBtn.click(); return true }
+    return false
+  })
+
+  if (!msgClicked) {
+    log(`No message button for ${lead.name}`)
     return false
   }
 
-  await msgBtn.click()
   await sleep(2000)
 
   const msgBox = await page.$('.msg-form__contenteditable') ||
@@ -258,10 +382,17 @@ async function sendMessage(page, lead, messageText, newStatus, timestampField) {
   }
   await sleep(1500)
 
-  const sendBtn = await page.$('button[aria-label="Send"]') || await page.$('button.msg-form__send-button')
-  if (sendBtn) {
-    await sendBtn.click()
-    await sleep(2000)
+  const sent = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'))
+    const sendBtn = btns.find(b => 
+      b.getAttribute('aria-label') === 'Send' ||
+      b.className.includes('msg-form__send-button')
+    )
+    if (sendBtn) { sendBtn.click(); return true }
+    return false
+  })
+
+  if (sent) {
     log(`✅ Message sent to ${lead.name} (${newStatus})`)
     await updateLead(lead.id, { status: newStatus, [timestampField]: new Date().toISOString() })
     await logActivity(lead.campaign_id, lead.id, newStatus, `Message sent to ${lead.name}`)
@@ -275,6 +406,7 @@ async function run() {
   log('🔵 Bot started')
   log(`🔵 Supabase URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL}`)
   log(`🔵 LinkedIn email: ${LINKEDIN_EMAIL}`)
+
   if (!LINKEDIN_EMAIL || !LINKEDIN_PASSWORD) {
     log('❌ LINKEDIN_EMAIL and LINKEDIN_PASSWORD must be set in .env.local')
     process.exit(1)
@@ -292,10 +424,9 @@ async function run() {
   const browser = await chromium.launch({
     headless: HEADLESS,
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-blink-features=AutomationControlled'],
-    slowMo: 100,
+    slowMo: 50,
   })
 
-  // Save session to disk so LinkedIn stays logged in between runs
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
@@ -303,9 +434,9 @@ async function run() {
       ? './playwright-bot/session.json'
       : undefined,
   })
+
   const page = await context.newPage()
 
-  // Hide automation flags
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
   })
@@ -315,20 +446,15 @@ async function run() {
     await context.storageState({ path: './playwright-bot/session.json' })
     log('💾 Session saved')
 
-    
-// DEBUG: Check database connection and leads
+    // Debug DB
     const { data: allLeads, error: dbError } = await db.from('leads').select('*')
     if (dbError) {
       log(`❌ Database error: ${dbError.message}`)
-    } 
-    else {
+    } else {
       log(`📊 Total leads in database: ${allLeads.length}`)
-      allLeads.forEach(l => log(`   - ${l.name} | status: ${l.status} | campaign_id: ${l.campaign_id}`))
+      allLeads.forEach(l => log(`   - ${l.name} | status: ${l.status}`))
     }
 
-const { data: campaigns } = await db.from('campaigns').select('*')
-log(`📊 Total campaigns: ${(campaigns || []).length}`)
-campaigns?.forEach(c => log(`   - ${c.name} | status: ${c.status}`))
     let connectionsSentToday = 0
     let messagesSentToday = 0
     const now = new Date()
@@ -354,17 +480,22 @@ campaigns?.forEach(c => log(`   - ${c.name} | status: ${c.status}`))
 
     // Phase 2: Day 3 messages
     log('\n📤 Phase 2: Day 3 messages...')
-    const day3Cutoff = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString()
-    const { data: connectedLeads } = await db
+    
+    const day3Cutoff = new Date(now + 1 * 60 * 1000).toISOString()
+    const { data: connectedLeads, error: e2} = await db
       .from('leads')
       .select('*, campaigns!inner(status)')
       .eq('status', 'connected')
       .eq('campaigns.status', 'active')
       .lte('connected_at', day3Cutoff)
       .limit(MAX_MESSAGES_PER_DAY)
-
-    log(`Found ${(connectedLeads || []).length} leads ready for Day 3 message`)
-    for (const lead of (connectedLeads || [])) {
+      
+    if (e2) log(`Phase 2 DB error: ${e2.message}`)
+    log(`Found ${(connectedLeads|| []).length} msg1 leads`)
+    
+    
+    
+      for (const lead of (connectedLeads || [])) {
       if (messagesSentToday >= MAX_MESSAGES_PER_DAY) break
       if (!lead.msg1) continue
       const ok = await sendMessage(page, lead, lead.msg1, 'msg1_sent', 'msg1_sent_at')
